@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Sports Predictor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      :root {
+        --color-bg: #F9FAFB;
+        --color-surface: #FFFFFF;
+        --color-primary: #2DD4BF;
+        --color-primary-hover: #14B8A6;
+        --color-secondary: #F3F4F6;
+        --color-text: #1F2937;
+        --color-text-secondary: #6B7280;
+      }
+      .dark {
+        --color-bg: #1F2937; /* slate.800 */
+        --color-surface: #374151; /* slate.700 */
+        --color-primary: #2DD4BF; /* teal.400 */
+        --color-primary-hover: #14B8A6; /* teal.500 */
+        --color-secondary: #4B5563; /* slate.600 */
+        --color-text: #D1D5DB; /* slate.300 */
+        --color-text-secondary: #9CA3AF; /* slate.400 */
+      }
+      body {
+        background-color: var(--color-bg);
+        color: var(--color-text);
+        transition: background-color 0.3s ease, color 0.3s ease;
+      }
+    </style>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              'brand-bg': 'var(--color-bg)',
+              'brand-surface': 'var(--color-surface)',
+              'brand-primary': 'var(--color-primary)',
+              'brand-primary-hover': 'var(--color-primary-hover)',
+              'brand-secondary': 'var(--color-secondary)',
+              'brand-text': 'var(--color-text)',
+              'brand-text-secondary': 'var(--color-text-secondary)',
+            },
+          },
+        },
+      }
+    </script>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+    "react/": "https://esm.sh/react@^19.1.0/",
+    "react": "https://esm.sh/react@^19.1.0",
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.6.3",
+    "@google/genai": "https://esm.sh/@google/genai@^1.8.0",
+    "chart.js": "https://esm.sh/chart.js@^4.4.3",
+    "chartjs-adapter-date-fns": "https://esm.sh/chartjs-adapter-date-fns@^3.0.0",
+    "date-fns/": "https://esm.sh/date-fns@^4.1.0/",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.45.0",
+    "uuid": "https://esm.sh/uuid@^9.0.1"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>
