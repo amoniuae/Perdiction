@@ -3,16 +3,51 @@ import { Sport, MatchPrediction, AccumulatorTip, PredictionsWithSources, Accumul
 import { getCachedData, setCachedData } from '../utils/caching';
 import { getTodayAndTomorrowGH, getNext7DaysForPromptGH, getThisWeekRangeForPromptGH } from '../utils/dateUtils';
 
-const API_KEY = "AIzaSyBqQAtOxu066HCnqfa1EtGUcberVRdvALE";
+// SECURITY ISSUE: API key should not be hardcoded
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 
 if (!API_KEY) {
-  throw new Error("API_KEY is not provided.");
+  throw new Error("GEMINI_API_KEY environment variable is required but not provided.");
 }
 
 export const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 const JSON_SYSTEM_INSTRUCTION = "You are a sports data API. Your only output format is raw, valid JSON. You do not provide any explanations, logs, or conversational text. Your entire response must start and end with the appropriate JSON delimiters (e.g., '{' and '}' for an object). Your entire response must be ONLY the JSON, with no other text before or after.";
 
+// Constants for better maintainability
+const CACHE_KEYS = {
+  FOOTBALL_PAGE: 'footballPageData',
+  BET_OF_DAY: 'betOfTheDay',
+  LEAGUE_DATA: 'leagueData',
+  ACCUMULATOR_STRATEGIES: 'accumulatorStrategySets',
+  SCORES_CACHE: 'scoresCache',
+  ACCUMULATOR_RESULTS: 'accumulatorResultsCache',
+  JC_GAMES: 'jcGamesData',
+  WEEKLY_FOOTBALL: 'weeklyFootballGames'
+} as const;
+
+// Error handling utility
+const handleApiError = (error: unknown, context: string): never => {
+  console.error(`Gemini API error in ${context}:`, error);
+  throw new Error(`Failed to fetch data from AI service: ${context}`);
+};
+
+// Retry mechanism for API calls
+const withRetry = async <T>(
+  operation: () => Promise<T>,
+  maxRetries: number = 3,
+  delay: number = 1000
+): Promise<T> => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt === maxRetries) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay * attempt));
+    }
+  }
+  throw new Error('Max retries exceeded');
+};
 const BASE_PREDICTION_PROMPT = `
 1.  **DUAL PREDICTION MODEL:** For each match, provide two distinct predictions: "aiPrediction" (data-driven) and "learningPrediction" (form-focused). Both need confidence scores. The "recommendedBet" should be the single best bet.
 2.  **BET BUILDER GENERATION (Optional):** If a compelling, multi-leg, single-game accumulator (a "Bet Builder") can be created for a match, generate one. This should be a 2-4 leg bet with correlated outcomes (e.g., Team A wins, Over 2.5 Goals, Team A top scorer to score). The "betBuilder" field should be an AccumulatorTip object. If no good Bet Builder opportunity exists, this field **MUST** be \`null\`.
@@ -49,8 +84,12 @@ const PREDICTION_JSON_SCHEMA = `
 `;
 
 export const parseJsonResponse = <T,>(jsonString: any): T | null => {
+  // Input validation
+  if (jsonString === null || jsonString === undefined) {
+    return null;
+  }
+
   if (typeof jsonString === 'object' && jsonString !== null) {
-    // The response seems to be an already parsed JSON object.
     return jsonString as T;
   }
 
@@ -62,88 +101,24 @@ export const parseJsonResponse = <T,>(jsonString: any): T | null => {
   let textToParse = jsonString.trim();
   const lowerCaseText = textToParse.toLowerCase();
 
-  // Early exit for simple 'null' response.
   if (lowerCaseText === 'null') {
-      return null;
+    return null;
   }
   
-  // Check for signs of a conversational response instead of JSON.
-  const isLikelyNotJson = !lowerCaseText.startsWith('{') && !lowerCaseText.startsWith('[');
-  
-  const conversationalKeywords = [
-      // Failure/inability to find information
-      'i am sorry', 'i cannot', 'unable to find', 'could not find',
-      'no verifiable matches', 'no football matches', 'data is not available',
-      'not possible to fulfill', 'no odds were provided',
-      'challenging', 'absence of readily available', 'not possible to fulfill the request',
-      'due to the nature', 'unable to provide', 'not possible to provide', 'as an ai',
-      'appropriate response is `null`', 'the response will be `null`',
-      // Verbose success messages (not in JSON format)
-      'based on the available information',
-      'ai prediction:',
-      'ai rationale:'
-  ];
-  
-  const hasConversationalKeywords = conversationalKeywords.some(keyword => lowerCaseText.includes(keyword));
-
-  // Check if the string concludes with `null`, ignoring trailing punctuation or backticks.
-  const endsWithNull = /`?null`?\.?\s*$/.test(lowerCaseText);
-
-  // If it doesn't look like JSON and has conversational keywords, or is a long text that ends with 'null',
-  // treat it as a non-JSON response and return null to avoid parsing errors.
-  if (isLikelyNotJson && (hasConversationalKeywords || (textToParse.length > 50 && endsWithNull))) {
+  // Improved JSON detection and cleaning
+  if (!isValidJsonStart(textToParse)) {
+    if (hasConversationalContent(lowerCaseText)) {
       console.warn("AI returned a conversational response instead of JSON. Interpreting as null.", { response: jsonString });
       return null;
-  }
-
-  const fenceRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
-  const match = textToParse.match(fenceRegex);
-
-  if (match && match[1]) {
-    textToParse = match[1].trim();
-  } else {
-    // If no fence, try to find the start of a JSON object or array.
-    const jsonStartIndex = textToParse.indexOf('{');
-    const arrayStartIndex = textToParse.indexOf('[');
-
-    let startIndex = -1;
-
-    if (jsonStartIndex > -1 && arrayStartIndex > -1) {
-      startIndex = Math.min(jsonStartIndex, arrayStartIndex);
-    } else if (jsonStartIndex > -1) {
-      startIndex = jsonStartIndex;
-    } else {
-      startIndex = arrayStartIndex;
-    }
-
-    if (startIndex !== -1) {
-        textToParse = textToParse.substring(startIndex);
-    } else {
-      // If we still can't find a JSON start, and it wasn't caught by the conversational check, then it's a true parsing failure.
-      console.error("Failed to find JSON start in the response.");
-      console.error("Original string:", jsonString);
-      return null;
     }
   }
 
-  // Sanitize common annotation/formatting issues.
-  const annotationRegex = /tapped from search result \[\d+(,\s*\d+)*\]/g;
-  textToParse = textToParse.replace(annotationRegex, '');
-  
-  const rogueWordRegex = /(?<=")\s+\w+\s*(?=[,}\]])/g;
-  textToParse = textToParse.replace(rogueWordRegex, '');
-
-  const malformedDateRegex = /(\d{2}:\d{2}:\d{2}):\d{2}(Z)/g;
-  textToParse = textToParse.replace(malformedDateRegex, '$1$2');
-
-  const mergedObjectRegex = /(Z")\s*\w+\s*(\w+)(?=:)/g;
-  textToParse = textToParse.replace(mergedObjectRegex, '$1}, {"$2"');
-
+  textToParse = extractJsonFromResponse(textToParse);
+  textToParse = sanitizeJsonString(textToParse);
 
   try {
-    // Final check for the literal 'null' after sanitization
     if (textToParse.trim().toLowerCase() === 'null') {
-        return null;
+      return null;
     }
     return JSON.parse(textToParse) as T;
   } catch (error) {
@@ -152,6 +127,61 @@ export const parseJsonResponse = <T,>(jsonString: any): T | null => {
     console.error("Attempted to parse:", textToParse);
     return null;
   }
+};
+
+// Helper functions for JSON parsing
+const isValidJsonStart = (text: string): boolean => {
+  const trimmed = text.trim();
+  return trimmed.startsWith('{') || trimmed.startsWith('[');
+};
+
+const hasConversationalContent = (lowerText: string): boolean => {
+  const conversationalKeywords = [
+    'i am sorry', 'i cannot', 'unable to find', 'could not find',
+    'no verifiable matches', 'no football matches', 'data is not available',
+    'not possible to fulfill', 'no odds were provided',
+    'challenging', 'absence of readily available', 'not possible to fulfill the request',
+    'due to the nature', 'unable to provide', 'not possible to provide', 'as an ai',
+    'appropriate response is `null`', 'the response will be `null`',
+    'based on the available information', 'ai prediction:', 'ai rationale:'
+  ];
+  
+  return conversationalKeywords.some(keyword => lowerText.includes(keyword)) ||
+         /`?null`?\.?\s*$/.test(lowerText);
+};
+
+const extractJsonFromResponse = (text: string): string => {
+  const fenceRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
+  const match = text.match(fenceRegex);
+
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+
+  // Find JSON start
+  const jsonStartIndex = text.indexOf('{');
+  const arrayStartIndex = text.indexOf('[');
+  const startIndex = jsonStartIndex > -1 && arrayStartIndex > -1 
+    ? Math.min(jsonStartIndex, arrayStartIndex)
+    : Math.max(jsonStartIndex, arrayStartIndex);
+
+  return startIndex !== -1 ? text.substring(startIndex) : text;
+};
+
+const sanitizeJsonString = (text: string): string => {
+  const annotationRegex = /tapped from search result \[\d+(,\s*\d+)*\]/g;
+  text = text.replace(annotationRegex, '');
+  
+  const rogueWordRegex = /(?<=")\s+\w+\s*(?=[,}\]])/g;
+  text = text.replace(rogueWordRegex, '');
+
+  const malformedDateRegex = /(\d{2}:\d{2}:\d{2}):\d{2}(Z)/g;
+  text = text.replace(malformedDateRegex, '$1$2');
+
+  const mergedObjectRegex = /(Z")\s*\w+\s*(\w+)(?=:)/g;
+  text = text.replace(mergedObjectRegex, '$1}, {"$2"');
+
+  return text;
 };
 
 export const fetchDailyBriefing = async (pastStrategies: AIStrategy[]): Promise<DailyBriefing | null> => {
