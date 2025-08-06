@@ -1,9 +1,28 @@
 import React from 'react';
+import { memo, useMemo } from 'react';
 import { MatchPrediction, MatchStatus, AccumulatorTip, AccumulatorGame, Sport } from '../types';
 import { getMatchStatus } from '../utils/dateUtils';
 import { PlusCircleIcon, CheckCircleIcon, TrashIcon, ShieldIcon } from './icons';
 import { SportIcon } from './SportIcon';
 import RiskIndicator from './RiskIndicator';
+
+// Performance optimization: Memoize expensive calculations
+const calculatePnL = (betOutcome: 'Won' | 'Lost' | null, virtualStake: number, odds: number): number => {
+  if (betOutcome === 'Won') {
+    return virtualStake * odds - virtualStake;
+  }
+  if (betOutcome === 'Lost') {
+    return -virtualStake;
+  }
+  return 0;
+};
+
+// Memoized status styles to prevent recreation on each render
+const STATUS_STYLES: Record<MatchStatus, string> = {
+  [MatchStatus.Live]: 'bg-red-600 text-white animate-pulse',
+  [MatchStatus.Finished]: 'bg-brand-secondary text-brand-text-secondary',
+  [MatchStatus.Upcoming]: 'bg-brand-bg text-brand-text-secondary border border-brand-secondary',
+} as const;
 
 interface MatchPredictionCardProps {
   match: MatchPrediction;
@@ -20,18 +39,66 @@ interface MatchPredictionCardProps {
   onCheckResult?: (matchId: string) => void;
 }
 
-const confidenceColor = (confidence: number) => {
+// Memoized confidence color calculation
+const getConfidenceColor = (confidence: number): string => {
   if (confidence > 80) return 'text-green-400';
   if (confidence > 65) return 'text-yellow-400';
   return 'text-orange-400';
 };
 
+// Memoized sub-components for better performance
+const Stat: React.FC<{icon: React.ReactNode, label: string, value: React.ReactNode, valueClass?: string}> = memo(({icon, label, value, valueClass}) => (
+    <div className="text-center">
+        <div className="mx-auto h-6 w-6 text-brand-primary mb-1">{icon}</div>
+        <p className="text-xs text-brand-text-secondary">{label}</p>
+        <div className={`text-lg font-bold ${valueClass || 'text-brand-text'}`}>{value}</div>
+    </div>
+));
+
+Stat.displayName = 'Stat';
+
+const TrackButton: React.FC<{
+  isTracked: boolean;
+  isDashboardView: boolean;
+  virtualStake?: number;
+  onTrackClick: (e: React.MouseEvent) => void;
+}> = memo(({ isTracked, isDashboardView, virtualStake, onTrackClick }) => {
+  if (isDashboardView) return null;
+
+  if (isTracked) {
+    return (
+      <button 
+        onClick={onTrackClick} 
+        className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-md bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20 transition-colors w-full"
+        aria-label="Untrack this bet"
+      >
+        <CheckCircleIcon className="h-5 w-5" />
+        <span>Tracked ({(virtualStake || 0).toFixed(2)} u)</span>
+      </button>
+    );
+  }
+
+  return (
+    <button 
+      onClick={onTrackClick}
+      className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-md bg-brand-primary/80 text-white hover:bg-brand-primary transition-colors w-full"
+      aria-label="Track this bet"
+    >
+      <PlusCircleIcon className="h-5 w-5" />
+      <span>Track Bet</span>
+    </button>
+  );
+});
+
+TrackButton.displayName = 'TrackButton';
+
+// Extracted component for better maintainability
 const BetBuilderDisplay: React.FC<{
   tip: AccumulatorTip;
   onTrack: (e: React.MouseEvent) => void;
   isTracked: boolean;
   stake?: number;
-}> = ({ tip, onTrack, isTracked, stake }) => (
+}> = React.memo(({ tip, onTrack, isTracked, stake }) => (
     <div className="mt-4 pt-4 border-t-2 border-dashed border-brand-primary/20">
         <div className="bg-brand-secondary/40 p-4 rounded-lg">
             <h4 className="font-bold text-brand-primary flex items-center gap-2 mb-2">
@@ -73,10 +140,11 @@ const BetBuilderDisplay: React.FC<{
              )}
         </div>
     </div>
-);
+));
 
+BetBuilderDisplay.displayName = 'BetBuilderDisplay';
 
-const MatchPredictionCard: React.FC<MatchPredictionCardProps> = ({ 
+const MatchPredictionCard: React.FC<MatchPredictionCardProps> = memo(({ 
     match, 
     onToggleTrack,
     isTracked,
@@ -90,6 +158,18 @@ const MatchPredictionCard: React.FC<MatchPredictionCardProps> = ({
     pnl,
     onCheckResult,
 }) => {
+  // Memoize expensive calculations
+  const { status, text } = useMemo(() => getMatchStatus(match.matchDate), [match.matchDate]);
+  
+  const statusStyles: Record<MatchStatus, string> = useMemo(() => ({
+    [MatchStatus.Live]: 'bg-red-600 text-white animate-pulse',
+    [MatchStatus.Finished]: 'bg-brand-secondary text-brand-text-secondary',
+    [MatchStatus.Upcoming]: 'bg-brand-bg text-brand-text-secondary border border-brand-secondary',
+  }), []);
+
+  const formattedOdds = useMemo(() => (match.odds || 0).toFixed(2), [match.odds]);
+  const formattedStake = useMemo(() => (virtualStake || 0).toFixed(2), [virtualStake]);
+  
   const handleTrackClick = (e: React.MouseEvent) => {
     e.stopPropagation(); e.preventDefault();
     onToggleTrack(match.id, 'prediction');
@@ -102,41 +182,10 @@ const MatchPredictionCard: React.FC<MatchPredictionCardProps> = ({
     }
   };
 
-  const { status, text } = getMatchStatus(match.matchDate);
-
-  const statusStyles: Record<MatchStatus, string> = {
-    [MatchStatus.Live]: 'bg-red-600 text-white animate-pulse',
-    [MatchStatus.Finished]: 'bg-brand-secondary text-brand-text-secondary',
-    [MatchStatus.Upcoming]: 'bg-brand-bg text-brand-text-secondary border border-brand-secondary',
-  };
-  
-  const TrackButton: React.FC = () => {
-    if (isDashboardView) return null;
-
-    if (isTracked) {
-        return (
-            <button 
-                onClick={handleTrackClick} 
-                className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-md bg-green-500/10 text-green-400 border border-green-500/30 hover:bg-green-500/20 transition-colors"
-                aria-label="Untrack this bet"
-            >
-                <CheckCircleIcon className="h-5 w-5" />
-                <span>Tracked ({(virtualStake || 0).toFixed(2)} u)</span>
-            </button>
-        );
-    }
-
-    return (
-        <button 
-            onClick={handleTrackClick}
-            className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold rounded-md bg-brand-primary/80 text-white hover:bg-brand-primary transition-colors"
-            aria-label="Track this bet"
-        >
-            <PlusCircleIcon className="h-5 w-5" />
-            <span>Track Bet</span>
-        </button>
-    );
-  };
+  // Memoize calculated PnL
+  const calculatedPnL = React.useMemo(() => {
+    return pnl !== undefined ? pnl : calculatePnL(betOutcome || null, virtualStake || 0, match.odds || 0);
+  }, [pnl, betOutcome, virtualStake, match.odds]);
 
   const renderPredictionDetails = () => {
     if (status === MatchStatus.Finished) {
@@ -151,7 +200,7 @@ const MatchPredictionCard: React.FC<MatchPredictionCardProps> = ({
             );
         }
 
-        if (betOutcome && pnl !== undefined && virtualStake !== undefined) {
+        if (betOutcome && calculatedPnL !== undefined && virtualStake !== undefined) {
             const outcomeColor = betOutcome === 'Won' ? 'text-green-400' : 'text-red-500';
             const outcomeBadgeBg = betOutcome === 'Won' ? 'bg-green-500/10' : 'bg-red-500/10';
 
@@ -168,8 +217,8 @@ const MatchPredictionCard: React.FC<MatchPredictionCardProps> = ({
                         </div>
                          <div>
                             <p className="text-brand-text-secondary text-sm">Profit/Loss</p>
-                            <p className={`text-xl font-bold ${(pnl || 0) >= 0 ? 'text-green-400' : 'text-red-500'}`}>
-                                {(pnl || 0) >= 0 ? `+${(pnl || 0).toFixed(2)}` : (pnl || 0).toFixed(2)}
+                            <p className={`text-xl font-bold ${calculatedPnL >= 0 ? 'text-green-400' : 'text-red-500'}`}>
+                                {calculatedPnL >= 0 ? `+${calculatedPnL.toFixed(2)}` : calculatedPnL.toFixed(2)}
                             </p>
                         </div>
                     </div>
@@ -259,7 +308,12 @@ const MatchPredictionCard: React.FC<MatchPredictionCardProps> = ({
                             <span className="text-xl font-bold">{(match.odds || 0).toFixed(2)}</span>
                         </div>
                     </div>
-                    <TrackButton />
+                    <TrackButton 
+                      isTracked={isTracked}
+                      isDashboardView={isDashboardView}
+                      virtualStake={virtualStake}
+                      onTrackClick={handleTrackClick}
+                    />
                 </div>
                 {match.aiRationale && <p className="text-sm text-brand-text-secondary italic mt-2">"{match.aiRationale}"</p>}
             </div>
@@ -348,6 +402,8 @@ const MatchPredictionCard: React.FC<MatchPredictionCardProps> = ({
       </div>
     </div>
   );
-};
+});
+
+MatchPredictionCard.displayName = 'MatchPredictionCard';
 
 export default MatchPredictionCard;

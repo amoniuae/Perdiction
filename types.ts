@@ -1,3 +1,26 @@
+// Utility types for better type safety
+export type NonEmptyArray<T> = [T, ...T[]];
+export type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+export type RequiredFields<T, K extends keyof T> = T & Required<Pick<T, K>>;
+
+// Validation schemas using branded types for better type safety
+export type PositiveNumber = number & { readonly __brand: 'PositiveNumber' };
+export type ValidDateString = string & { readonly __brand: 'ValidDateString' };
+export type NonEmptyString = string & { readonly __brand: 'NonEmptyString' };
+
+// Type guards for runtime validation
+export const isPositiveNumber = (value: number): value is PositiveNumber => {
+  return typeof value === 'number' && value > 0 && isFinite(value);
+};
+
+export const isValidDateString = (value: string): value is ValidDateString => {
+  return typeof value === 'string' && !isNaN(new Date(value).getTime());
+};
+
+export const isNonEmptyString = (value: string): value is NonEmptyString => {
+  return typeof value === 'string' && value.trim().length > 0;
+};
+
 export enum Sport {
   Football = "Football",
   Basketball = "Basketball",
@@ -15,11 +38,12 @@ export enum MatchStatus {
   Finished = "Finished",
 }
 
+// Enhanced interfaces with better type safety
 export interface MatchPrediction {
-  id: string;
-  teamA: string;
-  teamB: string;
-  matchDate: string;
+  id: NonEmptyString;
+  teamA: NonEmptyString;
+  teamB: NonEmptyString;
+  matchDate: ValidDateString;
   sport: Sport;
   formA?: string;
   formB?: string;
@@ -27,45 +51,45 @@ export interface MatchPrediction {
   keyStats?: string;
   stadium?: string;
   city?: string;
-  aiPrediction: string;
-  aiConfidence: number;
-  learningPrediction: string;
-  learningConfidence: number;
+  aiPrediction: NonEmptyString;
+  aiConfidence: PositiveNumber;
+  learningPrediction: NonEmptyString;
+  learningConfidence: PositiveNumber;
   aiRationale?: string;
-  recommendedBet: string;
-  odds: number;
+  recommendedBet: NonEmptyString;
+  odds: PositiveNumber;
   league?: string;
   betBuilder?: AccumulatorTip; // New field for single-game multi-leg bets
 }
 
 export interface FavoritePrediction extends MatchPrediction {
-  virtualStake: number;
+  virtualStake: PositiveNumber;
 }
 
 export interface AccumulatorGame {
-  teamA: string;
-  teamB: string;
-  prediction: string;
+  teamA: NonEmptyString;
+  teamB: NonEmptyString;
+  prediction: NonEmptyString;
   sport: Sport;
-  matchDate: string;
-  odds: number;
+  matchDate: ValidDateString;
+  odds: PositiveNumber;
   rationale?: string;
-  confidence?: number;
+  confidence?: PositiveNumber;
 }
 
 export interface AccumulatorTip {
-  id: string;
-  name: string;
-  successProbability: number;
-  combinedOdds: number;
+  id: NonEmptyString;
+  name: NonEmptyString;
+  successProbability: PositiveNumber;
+  combinedOdds: PositiveNumber;
   riskLevel: 'Low' | 'Medium' | 'High';
   rationale?: string;
-  games: AccumulatorGame[];
+  games: NonEmptyArray<AccumulatorGame>;
   strategy_id?: string;
 }
 
 export interface FavoriteAccumulator extends AccumulatorTip {
-  virtualStake: number;
+  virtualStake: PositiveNumber;
 }
 
 export interface GroundingChunk {

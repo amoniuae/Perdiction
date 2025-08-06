@@ -3,12 +3,27 @@ import { supabase } from '../services/supabaseClient';
 import { getSessionUserId } from '../utils/session';
 import { FavoritePrediction, FavoriteAccumulator, MatchPrediction, AccumulatorTip, AIStrategy } from '../types';
 
+// Error types for better error handling
+enum FavoritesErrorType {
+  DATABASE_CONNECTION = 'DATABASE_CONNECTION',
+  DATABASE_TABLES_MISSING = 'DATABASE_TABLES_MISSING',
+  AUTHENTICATION = 'AUTHENTICATION',
+  VALIDATION = 'VALIDATION',
+  UNKNOWN = 'UNKNOWN'
+}
+
+interface FavoritesError {
+  type: FavoritesErrorType;
+  message: string;
+  details?: any;
+}
+
 interface FavoritesContextType {
   trackedPredictions: FavoritePrediction[];
   trackedAccumulators: FavoriteAccumulator[];
   aiStrategies: AIStrategy[];
   isLoading: boolean;
-  error: string | null;
+  error: FavoritesError | null;
   addPrediction: (prediction: MatchPrediction, virtualStake: number) => Promise<void>;
   removePrediction: (predictionId: string) => Promise<void>;
   addAccumulator: (accumulator: AccumulatorTip, virtualStake: number, strategyId?: string) => Promise<void>;
@@ -19,33 +34,103 @@ interface FavoritesContextType {
   updateAIStrategyOutcome: (strategyId: string, outcome: 'Won' | 'Lost', pnl: number) => Promise<void>;
   clearAllTrackedBets: () => Promise<void>;
   clearError: () => void;
+  retryLastOperation: () => Promise<void>;
 }
 
 const FavoritesContext = createContext<FavoritesContextType | undefined>(undefined);
 
 const THIRTY_DAYS_AGO = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
+// Input validation utilities
+const validatePrediction = (prediction: MatchPrediction): void => {
+  if (!prediction.id || !prediction.teamA || !prediction.teamB) {
+    throw new Error('Invalid prediction: missing required fields');
+  }
+  if (!prediction.matchDate || isNaN(new Date(prediction.matchDate).getTime())) {
+    throw new Error('Invalid prediction: invalid match date');
+  }
+};
+
+const validateAccumulator = (accumulator: AccumulatorTip): void => {
+  if (!accumulator.id || !accumulator.name) {
+    throw new Error('Invalid accumulator: missing required fields');
+  }
+  if (!accumulator.games || accumulator.games.length === 0) {
+    throw new Error('Invalid accumulator: no games provided');
+  }
+};
+
+const validateStake = (stake: number): void => {
+  if (typeof stake !== 'number' || stake <= 0 || !isFinite(stake)) {
+    throw new Error('Invalid stake: must be a positive number');
+  }
+  if (stake > 10000) {
+    throw new Error('Invalid stake: maximum stake is 10,000 units');
+  }
+};
+
 export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [trackedPredictions, setTrackedPredictions] = useState<FavoritePrediction[]>([]);
   const [trackedAccumulators, setTrackedAccumulators] = useState<FavoriteAccumulator[]>([]);
   const [aiStrategies, setAiStrategies] = useState<AIStrategy[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FavoritesError | null>(null);
+  const [lastFailedOperation, setLastFailedOperation] = useState<(() => Promise<void>) | null>(null);
   const userId = getSessionUserId();
   
   const clearError = () => setError(null);
 
-  const handleSupabaseError = (error: any, context: string) => {
+  const createError = (type: FavoritesErrorType, message: string, details?: any): FavoritesError => ({
+    type,
+    message,
+    details
+  });
+
+  const handleSupabaseError = (error: any, context: string, operation?: () => Promise<void>) => {
     console.error(`Supabase error while ${context}:`, JSON.stringify(error, null, 2));
+    
+    if (operation) {
+      setLastFailedOperation(() => operation);
+    }
+    
     const errorMessage = (error.message || '').toLowerCase();
     
     if (errorMessage.includes('api key')) {
-      setError('Authentication with the database failed. Please ensure the Supabase API key in `config.ts` is correct.');
+      setError(createError(
+        FavoritesErrorType.AUTHENTICATION,
+        'Authentication with the database failed. Please ensure the Supabase API key in `config.ts` is correct.',
+        { context, originalError: error.message }
+      ));
     } else if (errorMessage.includes('relation') && errorMessage.includes('does not exist')) {
-      setError('DATABASE_TABLES_MISSING');
+      setError(createError(
+        FavoritesErrorType.DATABASE_TABLES_MISSING,
+        'DATABASE_TABLES_MISSING',
+        { context, originalError: error.message }
+      ));
+    } else if (errorMessage.includes('network') || errorMessage.includes('connection')) {
+      setError(createError(
+        FavoritesErrorType.DATABASE_CONNECTION,
+        `Network error occurred while ${context}. Please check your connection and try again.`,
+        { context, originalError: error.message }
+      ));
+    } else {
+      setError(createError(
+        FavoritesErrorType.UNKNOWN,
+        `A database error occurred while ${context}. Please check your connection and try again.`,
+        { context, originalError: error.message }
+      ));
     }
-    else {
-      setError(`A database error occurred while ${context}. Please check your connection and try again.`);
+  };
+
+  const retryLastOperation = async (): Promise<void> => {
+    if (lastFailedOperation) {
+      clearError();
+      try {
+        await lastFailedOperation();
+        setLastFailedOperation(null);
+      } catch (error) {
+        console.error('Retry operation failed:', error);
+      }
     }
   };
 
@@ -106,24 +191,44 @@ export const FavoritesProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [fetchData]);
 
   const addPrediction = async (prediction: MatchPrediction, virtualStake: number) => {
+    try {
+      validatePrediction(prediction);
+      validateStake(virtualStake);
+    } catch (validationError) {
+      setError(createError(
+        FavoritesErrorType.VALIDATION,
+        validationError instanceof Error ? validationError.message : 'Validation failed'
+      ));
+      return;
+    }
+
     clearError();
     const newFavorite: FavoritePrediction = { ...prediction, virtualStake };
-    const { error } = await supabase.from('tracked_predictions').upsert({
-      user_id: userId,
-      prediction_id: prediction.id,
-      prediction_data: prediction,
-      virtual_stake: virtualStake,
-    }, {
-      onConflict: 'user_id,prediction_id',
-    });
+    
+    const operation = async () => {
+      const { error } = await supabase.from('tracked_predictions').upsert({
+        user_id: userId,
+        prediction_id: prediction.id,
+        prediction_data: prediction,
+        virtual_stake: virtualStake,
+      }, {
+        onConflict: 'user_id,prediction_id',
+      });
 
-    if (error) {
-      handleSupabaseError(error, 'tracking the prediction');
-    } else {
+      if (error) {
+        throw error;
+      }
+      
       setTrackedPredictions(prev => {
         const otherPredictions = prev.filter(p => p.id !== prediction.id);
         return [...otherPredictions, newFavorite].sort((a,b) => new Date(a.matchDate).getTime() - new Date(b.matchDate).getTime());
       });
+    };
+
+    try {
+      await operation();
+    } catch (error) {
+      handleSupabaseError(error, 'tracking the prediction', operation);
     }
   };
 

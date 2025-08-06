@@ -1,5 +1,6 @@
 import React from 'react';
 import * as ReactRouterDOM from 'react-router-dom';
+import ErrorBoundary from './components/ErrorBoundary';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import Home from './pages/Home';
@@ -21,7 +22,7 @@ import { useFavorites } from './contexts/FavoritesContext';
 const AppContent: React.FC = () => {
   const { error, clearError } = useFavorites();
 
-  if (error === 'DATABASE_TABLES_MISSING') {
+  if (error?.type === 'DATABASE_TABLES_MISSING' || error?.message === 'DATABASE_TABLES_MISSING') {
     return <DatabaseSetupNeededOverlay />;
   }
   
@@ -29,7 +30,9 @@ const AppContent: React.FC = () => {
     <div className="flex flex-col min-h-screen">
       {error && (
         <div className="bg-red-600 text-white p-3 text-center sticky top-0 z-50 flex justify-between items-center shadow-lg" role="alert">
-          <p className="flex-grow text-sm font-semibold">{error}</p>
+          <p className="flex-grow text-sm font-semibold">
+            {typeof error === 'string' ? error : error.message}
+          </p>
           <button 
             onClick={clearError} 
             className="ml-4 p-1 rounded-full hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-white"
@@ -41,22 +44,26 @@ const AppContent: React.FC = () => {
           </button>
         </div>
       )}
-      <Header />
-      <main className="flex-grow container mx-auto px-4 py-8">
-        <ReactRouterDOM.Routes>
-          <ReactRouterDOM.Route path="/" element={<Home />} />
-          <ReactRouterDOM.Route path="/football" element={<Football />} />
-          <ReactRouterDOM.Route path="/leagues" element={<Leagues />} />
-          <ReactRouterDOM.Route path="/accumulator" element={<Accumulator />} />
-          <ReactRouterDOM.Route path="/generator/custom" element={<AIGenerator />} />
-          <ReactRouterDOM.Route path="/dashboard" element={<Dashboard />} />
-          <ReactRouterDOM.Route path="/learning" element={<Learning />} />
-          <ReactRouterDOM.Route path="/about" element={<About />} />
-          <ReactRouterDOM.Route path="/match-detail" element={<MatchDetail />} />
-          <ReactRouterDOM.Route path="/responsible-gambling" element={<ResponsibleGambling />} />
-        </ReactRouterDOM.Routes>
-      </main>
-      <Footer />
+      <ErrorBoundary>
+        <Header />
+        <main className="flex-grow container mx-auto px-4 py-8">
+          <ErrorBoundary>
+            <ReactRouterDOM.Routes>
+              <ReactRouterDOM.Route path="/" element={<Home />} />
+              <ReactRouterDOM.Route path="/football" element={<Football />} />
+              <ReactRouterDOM.Route path="/leagues" element={<Leagues />} />
+              <ReactRouterDOM.Route path="/accumulator" element={<Accumulator />} />
+              <ReactRouterDOM.Route path="/generator/custom" element={<AIGenerator />} />
+              <ReactRouterDOM.Route path="/dashboard" element={<Dashboard />} />
+              <ReactRouterDOM.Route path="/learning" element={<Learning />} />
+              <ReactRouterDOM.Route path="/about" element={<About />} />
+              <ReactRouterDOM.Route path="/match-detail" element={<MatchDetail />} />
+              <ReactRouterDOM.Route path="/responsible-gambling" element={<ResponsibleGambling />} />
+            </ReactRouterDOM.Routes>
+          </ErrorBoundary>
+        </main>
+        <Footer />
+      </ErrorBoundary>
     </div>
   );
 };
@@ -67,10 +74,12 @@ const App: React.FC = () => {
   }
   
   return (
-    <ReactRouterDOM.HashRouter>
-      <ScrollToTop />
-      <AppContent />
-    </ReactRouterDOM.HashRouter>
+    <ErrorBoundary>
+      <ReactRouterDOM.HashRouter>
+        <ScrollToTop />
+        <AppContent />
+      </ReactRouterDOM.HashRouter>
+    </ErrorBoundary>
   );
 };
 
