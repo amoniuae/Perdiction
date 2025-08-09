@@ -115,10 +115,10 @@ const WEEK_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
  * @returns An object with startOfWeek and endOfWeek Date objects.
  */
 export const getThisWeekRangeGH = (): { startOfWeek: Date; endOfWeek: Date } => {
-    const now = Date.now();
+    const currentTime = Date.now();
     
     // Return cached result if still valid
-    if (cachedWeekRange && (now - cachedWeekRange.cacheTime) < WEEK_CACHE_DURATION) {
+    if (cachedWeekRange && (currentTime - cachedWeekRange.cacheTime) < WEEK_CACHE_DURATION) {
         return {
             startOfWeek: cachedWeekRange.startOfWeek,
             endOfWeek: cachedWeekRange.endOfWeek
@@ -144,7 +144,7 @@ export const getThisWeekRangeGH = (): { startOfWeek: Date; endOfWeek: Date } => 
     // Cache the result
     cachedWeekRange = {
         ...result,
-        cacheTime: Date.now()
+        cacheTime: currentTime
     };
     
     return result;
