@@ -69,3 +69,48 @@ export class GeminiService {
 }
 
 export const geminiService = new GeminiService();
+
+// Import types needed for the function
+import { MatchPrediction, GroundingChunk } from '../types';
+
+export async function fetchBetOfTheDay(): Promise<{
+  prediction: MatchPrediction | null;
+  sources: GroundingChunk[];
+}> {
+  try {
+    const prompt = `
+      Analyze today's football matches and provide the single most confident prediction as a "Bet of the Day".
+      
+      Please respond with a JSON object containing:
+      - prediction: A match prediction with teams, league, date, recommended bet, odds, confidence score
+      - sources: Array of grounding chunks with web references used for analysis
+      
+      Focus on matches with high confidence based on team form, head-to-head records, and current statistics.
+    `;
+
+    const response = await geminiService.generateContent(prompt);
+    
+    if (response.error) {
+      throw new Error(response.error);
+    }
+
+    // Try to parse the AI response as JSON
+    try {
+      const data = JSON.parse(response.text);
+      return {
+        prediction: data.prediction || null,
+        sources: data.sources || []
+      };
+    } catch (parseError) {
+      // If JSON parsing fails, return null prediction
+      console.warn('Failed to parse AI response as JSON:', parseError);
+      return {
+        prediction: null,
+        sources: []
+      };
+    }
+  } catch (error) {
+    console.error('Error fetching bet of the day:', error);
+    throw error;
+  }
+}
